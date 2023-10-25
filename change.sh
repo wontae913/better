@@ -32,7 +32,8 @@ do
         echo "invaild keyvalue"
         exit
     fi
-    echo -e "$SERVER keychanged"
+    
+    echo -e "$SERVER key changed"
     echo -e ""
     sleep 3
 
