@@ -26,11 +26,11 @@ do
     echo -e "Changing '$SERVER' key value"
     echo $KEYVALUE
 
-    if [ "" == "$KEYVALUE" ]; then
+    if [ "" != "$KEYVALUE" ]; then
+        sudo echo $KEYVALUE | ssh -o StrictHostKeyChecking=no -i $KEY $USER@$PRIVATE_IP -p $PORT "sudo runuser -l $USER -c 'cat > /home/$USER/.ssh/authorized_keys'"
+    else
         echo "invaild keyvalue"
         exit
-    else
-        sudo echo $KEYVALUE | ssh -o StrictHostKeyChecking=no -i $KEY $USER@$PRIVATE_IP -p $PORT "sudo runuser -l $USER -c 'cat > /home/$USER/.ssh/authorized_keys'"
     fi
 
     echo -e ""
