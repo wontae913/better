@@ -1,0 +1,8 @@
+# ㅋㅋㅋ 
+
+file 안에 내용은 아래와 같은 순서로 작성
+server-name  10.0.0.0  user  22  xxx.pem  new-xxx.pem
+
+키파일은 스크립트와 같은 폴더에
+
+스크립트 실행은 xxx.sh file
