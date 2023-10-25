@@ -12,12 +12,12 @@ do
 
     USER=$(echo -e $line | awk '{print $3}')
     echo -e "User Name = $USER"
-
-    KEY=$(echo -e $line | awk '{print $4}')
-    echo -e "KEY File Name = $KEY"
-
-    PORT=$(echo -e $line | awk '{print $5}')
+    
+    PORT=$(echo -e $line | awk '{print $4}')
     echo -e "SSH Port = $PORT"
+    
+    KEY=$(echo -e $line | awk '{print $5}')
+    echo -e "KEY File Name = $KEY"
 
     NEWKEY=$(echo -e $line | awk '{print $6}')
     echo -e "New-Key File Name = $NEWKEY"
@@ -32,7 +32,7 @@ do
         echo "invaild keyvalue"
         exit
     fi
-
+    echo -e "$SERVER keychanged"
     echo -e ""
     sleep 3
 
