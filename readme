@@ -1,8 +1,10 @@
 # ㅋㅋㅋ 
 
-file 안에 내용은 아래와 같은 순서로 작성
+file 안에 내용은 아래와 같은 순서로 작성, tab으로 띄어쓰기
+
+서버이름 / ip / user / port / key / newkey
 server-name  10.0.0.0  user  22  xxx.pem  new-xxx.pem
 
-키파일은 스크립트와 같은 폴더에
+키파일은 스크립트와 같은 폴더에 넣고 스크립트를 실행한다 
 
-스크립트 실행은 xxx.sh file
+스크립트 실행은 ./xxx.sh file or bash xxx.sh or sh xxx.sh
