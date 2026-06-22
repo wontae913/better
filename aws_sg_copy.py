@@ -1,10 +1,15 @@
 import boto3
 import csv
 import re
+import os
 
 def load_mapping_table(csv_path):
     """SG 참조 매핑 테이블을 로드합니다."""
     mapping = {}
+    if not csv_path or not os.path.exists(csv_path):
+        print(f"⚠️ 매핑 파일({csv_path})을 찾을 수 없어 SG 참조 규칙 매핑을 건너뜁니다.")
+        return mapping
+
     try:
         with open(csv_path, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
@@ -14,38 +19,32 @@ def load_mapping_table(csv_path):
                 if src and tgt:
                     mapping[src] = tgt
         print(f"ℹ️ 매핑 테이블 로드 완료 ({len(mapping)}개 항목)")
-    except FileNotFoundError:
-        print(f"⚠️ 매핑 파일({csv_path})이 없습니다. SG 참조 규칙은 제외될 수 있습니다.")
+    except Exception as e:
+        print(f"⚠️ 매핑 파일 읽기 오류: {e}")
     return mapping
 
 def parse_value_with_desc(val):
-    """
-    AWS CSV의 '값 (설명)' 포맷을 분리합니다.
-    예: '58.151.93.0/27 (ssh_bespin)' -> ('58.151.93.0/27', 'ssh_bespin')
-    """
-    if not val:
-        return None, None
-    
+    """AWS CSV의 '값 (설명)' 포맷 분리"""
+    if not val: return None, None
     val = val.strip()
-    # 공백을 기준으로 첫 번째 값(IP, SG ID 등)과 나머지(설명)를 분리
     parts = val.split(' ', 1)
     target_value = parts[0]
     description = ""
-    
     if len(parts) > 1:
-        # 정규식으로 괄호 안의 텍스트만 추출
         match = re.search(r'\((.*?)\)', parts[1])
-        if match:
-            description = match.group(1)
-            
+        if match: description = match.group(1)
     return target_value, description
 
-def import_sg_from_aws_csv(aws_csv_path, mapping_csv_path, target_vpc_id, region):
+def import_sg_from_aws_csv(aws_csv_path, mapping_csv_path, target_vpc_id, region, custom_sg_name, custom_desc):
     ec2 = boto3.client('ec2', region_name=region)
     mapping_table = load_mapping_table(mapping_csv_path)
     
     # 1. AWS CSV 파일 읽기
     rules = []
+    if not os.path.exists(aws_csv_path):
+        print(f"❌ 오류: AWS CSV 파일('{aws_csv_path}')을 찾을 수 없습니다.")
+        return
+
     with open(aws_csv_path, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -55,15 +54,19 @@ def import_sg_from_aws_csv(aws_csv_path, mapping_csv_path, target_vpc_id, region
         print("❌ CSV 파일에 규칙이 없습니다.")
         return
 
-    # 2. 첫 번째 행에서 보안그룹 이름 추출 및 C 계정에 생성
+    # 2. 보안그룹 이름 및 설명 결정
     original_sg_id = rules[0]['GroupId']
-    sg_name = f"{rules[0]['GroupName']}-copied"
+    original_sg_name = rules[0]['GroupName']
     
-    print(f"C 계정 VPC({target_vpc_id})에 새 보안그룹 '{sg_name}' 생성 중...")
+    # 사용자 입력값이 있으면 사용하고, 없으면 기본값 자동 적용
+    sg_name = custom_sg_name if custom_sg_name else f"{original_sg_name}-copied"
+    description = custom_desc if custom_desc else f"Copied from {original_sg_id} ({original_sg_name})"
+    
+    print(f"\n🚀 C 계정 VPC({target_vpc_id})에 새 보안그룹 '{sg_name}' 생성 중...")
     try:
         create_resp = ec2.create_security_group(
             GroupName=sg_name,
-            Description=f"Copied from {original_sg_id}",
+            Description=description,
             VpcId=target_vpc_id
         )
         new_sg_id = create_resp['GroupId']
@@ -75,39 +78,31 @@ def import_sg_from_aws_csv(aws_csv_path, mapping_csv_path, target_vpc_id, region
     # 자기 자신 참조를 위해 매핑 테이블 업데이트
     mapping_table[original_sg_id] = new_sg_id
 
-    # 기본 아웃바운드 규칙 제거 (원본과 완벽한 동기화를 위함)
+    # 기본 아웃바운드 규칙 제거
     try:
         ec2.revoke_security_group_egress(
             GroupId=new_sg_id,
             IpPermissions=[{'IpProtocol': '-1', 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}]
         )
-    except:
-        pass
+    except: pass
 
     # 3. CSV 행(규칙)별로 파싱하여 주입
     for idx, row in enumerate(rules, 1):
         rule_type = row.get('Type', '').lower()
         protocol = row.get('IpProtocol', '-1')
-        if protocol.lower() == 'all':
-            protocol = '-1'
+        if protocol.lower() == 'all': protocol = '-1'
 
-        # 포트 설정
         from_port = row.get('FromPort')
         to_port = row.get('ToPort')
         
-        ip_permission = {
-            'IpProtocol': protocol
-        }
+        ip_permission = {'IpProtocol': protocol}
         
-        # 프로토콜이 -1(All)이 아니면 포트 추가
         if protocol != '-1':
             try:
                 ip_permission['FromPort'] = int(from_port) if from_port and from_port.lower() != 'all' else -1
                 ip_permission['ToPort'] = int(to_port) if to_port and to_port.lower() != 'all' else -1
-            except ValueError:
-                pass # 포트가 숫자가 아닌 예외 상황 무시
+            except ValueError: pass
 
-        # 대상 값 파싱 (IP, IPv6, Prefix, SG)
         has_valid_target = False
         
         # IPv4
@@ -128,7 +123,7 @@ def import_sg_from_aws_csv(aws_csv_path, mapping_csv_path, target_vpc_id, region
                 ip_permission['Ipv6Ranges'] = [ipv6_range]
                 has_valid_target = True
 
-        # SG 참조 (UserIdGroupPairs)
+        # SG 참조
         elif row.get('UserIdGroupPairs'):
             sg_id, desc = parse_value_with_desc(row['UserIdGroupPairs'])
             if sg_id in mapping_table:
@@ -140,11 +135,10 @@ def import_sg_from_aws_csv(aws_csv_path, mapping_csv_path, target_vpc_id, region
             else:
                 print(f"⚠️ [행 {idx}] SG 참조({sg_id})가 매핑 테이블에 없어 건너뜁니다.")
 
-        # 타겟 값이 없으면 API 호출 에러가 나므로 스킵
         if not has_valid_target:
             continue
 
-        # 4. 규칙 주입 (Inbound / Outbound 구분)
+        # 4. 규칙 주입
         try:
             if 'inbound' in rule_type or 'ingress' in rule_type:
                 ec2.authorize_security_group_ingress(GroupId=new_sg_id, IpPermissions=[ip_permission])
@@ -158,10 +152,29 @@ def import_sg_from_aws_csv(aws_csv_path, mapping_csv_path, target_vpc_id, region
     print("\n🎉 모든 규칙 복사가 완료되었습니다!")
 
 if __name__ == "__main__":
-    # 파일명 및 대상 환경 설정
-    AWS_CSV_FILE = "2026_06_16_14_31_51_exportRulesToCsv.csv"  # 콘솔에서 다운받은 파일
-    MAPPING_CSV_FILE = "sg_mapping.csv"                        # 직접 작성한 SG ID 매핑 파일
-    TARGET_VPC_ID = "vpc-0abcdef1234567890"                    # C 계정의 VPC ID
-    REGION = "ap-northeast-2"
+    print("========================================")
+    print(" 🛡️  AWS 보안그룹 규칙 복사 스크립트")
+    print("========================================")
     
-    import_sg_from_aws_csv(AWS_CSV_FILE, MAPPING_CSV_FILE, TARGET_VPC_ID, REGION)
+    # 사용자로부터 변수 입력 받기 (엔터 입력 시 기본값 처리)
+    aws_csv_input = input(f"1. AWS에서 다운받은 CSV 파일명 (기본값: 2026_06_16_14_31_51_exportRulesToCsv.csv): ").strip()
+    aws_csv = aws_csv_input if aws_csv_input else "2026_06_16_14_31_51_exportRulesToCsv.csv"
+    
+    mapping_csv_input = input("2. 매핑용 CSV 파일명 (기본값: sg_mapping.csv): ").strip()
+    mapping_csv = mapping_csv_input if mapping_csv_input else "sg_mapping.csv"
+    
+    target_vpc = input("3. 타겟 VPC ID를 입력하세요 (예: vpc-0abcdef123): ").strip()
+    while not target_vpc:
+        print("⚠️ 타겟 VPC ID는 필수 입력값입니다.")
+        target_vpc = input("3. 타겟 VPC ID를 입력하세요 (예: vpc-0abcdef123): ").strip()
+        
+    custom_sg_name = input("4. 생성할 새 보안그룹 이름 (엔터 시 '[원본이름]-copied' 자동적용): ").strip()
+    custom_desc = input("5. 생성할 새 보안그룹 설명 (엔터 시 자동생성): ").strip()
+    
+    region_input = input("6. AWS 리전 (기본값: ap-northeast-2): ").strip()
+    region = region_input if region_input else "ap-northeast-2"
+    
+    print("\n========================================")
+    print("입력된 정보로 보안그룹 복사를 시작합니다...")
+    
+    import_sg_from_aws_csv(aws_csv, mapping_csv, target_vpc, region, custom_sg_name, custom_desc)
