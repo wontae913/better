@@ -157,8 +157,8 @@ if __name__ == "__main__":
     print("========================================")
     
     # 사용자로부터 변수 입력 받기 (엔터 입력 시 기본값 처리)
-    aws_csv_input = input(f"1. AWS에서 다운받은 CSV 파일명 (기본값: 2026_06_16_14_31_51_exportRulesToCsv.csv): ").strip()
-    aws_csv = aws_csv_input if aws_csv_input else "2026_06_16_14_31_51_exportRulesToCsv.csv"
+    aws_csv_input = input(f"1. AWS에서 다운받은 CSV 파일명 (기본값: exportRulesToCsv.csv): ").strip()
+    aws_csv = aws_csv_input if aws_csv_input else "exportRulesToCsv.csv"
     
     mapping_csv_input = input("2. 매핑용 CSV 파일명 (기본값: sg_mapping.csv): ").strip()
     mapping_csv = mapping_csv_input if mapping_csv_input else "sg_mapping.csv"
